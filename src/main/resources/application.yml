@@ -1,0 +1,4 @@
+logging:
+  level:
+    se.moln.orderservice: info
+    org.springframework.web.reactive.function.client: warn

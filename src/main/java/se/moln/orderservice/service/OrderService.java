@@ -1,8 +1,8 @@
 package se.moln.orderservice.service;
 
 import jakarta.transaction.Transactional;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -19,39 +19,49 @@ import se.moln.orderservice.model.Order;
 import se.moln.orderservice.model.OrderItem;
 import se.moln.orderservice.model.OrderStatus;
 import se.moln.orderservice.repository.OrderRepository;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class OrderService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(OrderService.class);
 
     private final OrderRepository orderRepository;
     private final WebClient webClient;
 
-    @Value("${userservice.url}")
-    private String userServiceUrl;
+    @Value("${userservice.url}")    private String userServiceUrl;
+    @Value("${productservice.url}") private String productServiceUrl;
 
-    @Value("${productservice.url}")
-    private String productServiceUrl;
+    public OrderService(OrderRepository orderRepository, WebClient webClient) {
+        this.orderRepository = orderRepository;
+        this.webClient = webClient;
+    }
 
     @Transactional
     public Mono<Order> createOrder(OrderRequest orderRequest) {
 
         if (orderRequest.items() == null || orderRequest.items().isEmpty()) {
+            LOG.warn("Validation failed: items list is empty");
             return Mono.error(new IllegalArgumentException("Items list must not be empty"));
         }
+
+        LOG.info("Starting order creation ({} items)", orderRequest.items().size());
 
         return webClient.get()
                 .uri(userServiceUrl + "/me")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + orderRequest.jwtToken())
                 .retrieve()
-                .onStatus(HttpStatusCode::isError, resp -> resp.createException().flatMap(Mono::error))
+                .onStatus(HttpStatusCode::isError, resp -> {
+                    LOG.error("User validation failed with status {}", resp.statusCode().value());
+                    return resp.createException().flatMap(Mono::error);
+                })
                 .bodyToMono(UserResponse.class)
                 .flatMap(user -> {
                     UUID userId = user.userId();
+                    LOG.debug("User validated userId={}", userId);
 
                     Order order = new Order();
                     order.setUserId(userId);
@@ -60,23 +70,28 @@ public class OrderService {
                     order.setTotalAmount(BigDecimal.ZERO);
 
                     return Flux.fromIterable(orderRequest.items())
-                            .flatMap(itemReq ->
-                                    webClient.post()
-                                            .uri(productServiceUrl + "/api/inventory/{productId}/purchase", itemReq.productId())
-                                            .bodyValue(new AdjustStockRequest(itemReq.quantity()))
-                                            .retrieve()
-                                            .onStatus(HttpStatusCode::isError, resp -> resp.createException().flatMap(Mono::error))
-                                            .bodyToMono(ProductResponse.class)
-                                            .map(prod -> {
-                                                OrderItem oi = new OrderItem();
-                                                oi.setProductId(itemReq.productId());
-                                                oi.setQuantity(itemReq.quantity());
-                                                oi.setPriceAtPurchase(prod.price());
-                                                oi.setProductName(prod.name());
-                                                oi.setOrder(order);
-                                                return oi;
-                                            })
-                            )
+                            .flatMap(itemReq -> {
+                                LOG.debug("Reserve stock productId={} qty={}", itemReq.productId(), itemReq.quantity());
+                                return webClient.post()
+                                        .uri(productServiceUrl + "/api/inventory/{pid}/purchase", itemReq.productId())
+                                        .bodyValue(new AdjustStockRequest(itemReq.quantity()))
+                                        .retrieve()
+                                        .onStatus(HttpStatusCode::isError, resp -> {
+                                            LOG.error("Stock reservation failed productId={} status={}",
+                                                    itemReq.productId(), resp.statusCode().value());
+                                            return resp.createException().flatMap(Mono::error);
+                                        })
+                                        .bodyToMono(ProductResponse.class)
+                                        .map(prod -> {
+                                            OrderItem oi = new OrderItem();
+                                            oi.setProductId(itemReq.productId());
+                                            oi.setQuantity(itemReq.quantity());
+                                            oi.setPriceAtPurchase(prod.price());
+                                            oi.setProductName(prod.name());
+                                            oi.setOrder(order);
+                                            return oi;
+                                        });
+                            })
                             .collectList()
                             .doOnNext(items -> {
                                 order.setOrderItems(items);
@@ -85,16 +100,16 @@ public class OrderService {
                                         .reduce(BigDecimal.ZERO, BigDecimal::add);
                                 order.setTotalAmount(total);
                                 order.setStatus(OrderStatus.CONFIRMED);
+                                LOG.info("Order calculated total={} status={}", total, order.getStatus());
                             })
-
                             .flatMap(items ->
                                     Mono.fromCallable(() -> orderRepository.save(order))
                                             .subscribeOn(Schedulers.boundedElastic())
                             )
-
+                            .doOnSuccess(o -> LOG.info("Order persisted id={}", o.getId()))
                             .onErrorResume(ex -> {
-                                log.warn("Order creation failed, marking as FAILED", ex);
                                 order.setStatus(OrderStatus.FAILED);
+                                LOG.warn("Order creation failed, marking FAILED: {}", ex.toString());
                                 return Mono.fromCallable(() -> orderRepository.save(order))
                                         .subscribeOn(Schedulers.boundedElastic())
                                         .then(Mono.error(ex));
