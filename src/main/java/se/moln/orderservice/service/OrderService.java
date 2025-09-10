@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 import se.moln.orderservice.dto.OrderRequest;
 import se.moln.orderservice.dto.ProductResponse;
 import se.moln.orderservice.dto.AdjustStockRequest;
@@ -14,7 +16,7 @@ import se.moln.orderservice.dto.UserResponse;
 import se.moln.orderservice.model.Order;
 import se.moln.orderservice.model.OrderItem;
 import se.moln.orderservice.repository.OrderRepository;
-
+import se.moln.orderservice.model.OrderStatus;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -51,7 +53,7 @@ public class OrderService {
                     Order order = new Order();
                     order.setUserId(userId);
                     order.setOrderDate(LocalDateTime.now());
-                    order.setStatus("PROCESSING");
+                    order.setStatus(OrderStatus.CREATED);
                     order.setTotalAmount(BigDecimal.ZERO);
 
                     System.out.println("här");
@@ -82,9 +84,17 @@ public class OrderService {
                                         .map(item -> item.getPriceAtPurchase().multiply(new BigDecimal(item.getQuantity())))
                                         .reduce(BigDecimal.ZERO, BigDecimal::add);
                                 order.setTotalAmount(totalAmount);
-                                order.setStatus("COMPLETED");
+                                order.setStatus(OrderStatus.CONFIRMED);
                             })
-                            .flatMap(orderItems -> Mono.fromCallable(() -> orderRepository.save(order)));
+                            .flatMap(items ->
+                                    Mono.fromCallable(() -> orderRepository.save(order))
+                                            .subscribeOn(Schedulers.boundedElastic()))
+                            .onErrorResume(ex -> {
+                                order.setStatus(OrderStatus.FAILED);
+                                return Mono.fromCallable(() -> orderRepository.save(order))
+                                        .subscribeOn(Schedulers.boundedElastic())
+                                        .then(Mono.error(ex));
+                            });
                 });
     }
 }

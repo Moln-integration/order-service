@@ -20,8 +20,24 @@ public class Order {
     private UUID userId;
     private BigDecimal totalAmount;
     private LocalDateTime orderDate;
-    private String status;
-
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> orderItems;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private OrderStatus status = OrderStatus.CREATED;
+
+    public void changeStatus(OrderStatus next) {
+        if (!this.status.canTransitionTo(next)) {
+            throw new IllegalStateException("Invalid status transition: " + this.status + " -> " + next);
+        }
+        this.status = next;
+    }
+
+    @PrePersist
+    void prePersist() {
+        if (status == null) status = OrderStatus.CREATED;
+        if (orderDate == null) orderDate = LocalDateTime.now();
+    }
+
 }
