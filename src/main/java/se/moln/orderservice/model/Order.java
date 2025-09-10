@@ -1,6 +1,5 @@
 package se.moln.orderservice.model;
 
-
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -14,30 +13,38 @@ import java.util.UUID;
 @Data
 @NoArgsConstructor
 public class Order {
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
+
+    @Column(nullable = false)
     private UUID userId;
+
+    @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal totalAmount;
+
+    @Column(nullable = false)
     private LocalDateTime orderDate;
-    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<OrderItem> orderItems;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private OrderStatus status = OrderStatus.CREATED;
 
-    public void changeStatus(OrderStatus next) {
-        if (!this.status.canTransitionTo(next)) {
-            throw new IllegalStateException("Invalid status transition: " + this.status + " -> " + next);
-        }
-        this.status = next;
-    }
+    @Column(name = "order_number", nullable = false, unique = true, length = 32)
+    private String orderNumber;
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItem> orderItems;
 
     @PrePersist
     void prePersist() {
         if (status == null) status = OrderStatus.CREATED;
         if (orderDate == null) orderDate = LocalDateTime.now();
+        if (orderNumber == null) {
+            orderNumber = "ORD-" + java.time.LocalDate.now()
+                    + "-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        }
+        if (totalAmount == null) totalAmount = BigDecimal.ZERO;
     }
-
 }

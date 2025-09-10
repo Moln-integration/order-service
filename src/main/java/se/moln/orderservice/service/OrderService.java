@@ -1,27 +1,31 @@
 package se.moln.orderservice.service;
 
 import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
 import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Scheduler;
+import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import se.moln.orderservice.dto.AdjustStockRequest;
 import se.moln.orderservice.dto.OrderRequest;
 import se.moln.orderservice.dto.ProductResponse;
-import se.moln.orderservice.dto.AdjustStockRequest;
 import se.moln.orderservice.dto.UserResponse;
 import se.moln.orderservice.model.Order;
 import se.moln.orderservice.model.OrderItem;
-import se.moln.orderservice.repository.OrderRepository;
 import se.moln.orderservice.model.OrderStatus;
+import se.moln.orderservice.repository.OrderRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class OrderService {
 
     private final OrderRepository orderRepository;
@@ -33,22 +37,21 @@ public class OrderService {
     @Value("${productservice.url}")
     private String productServiceUrl;
 
-    public OrderService(OrderRepository orderRepository, WebClient webClient) {
-        this.orderRepository = orderRepository;
-        this.webClient = webClient;
-    }
-
     @Transactional
     public Mono<Order> createOrder(OrderRequest orderRequest) {
+
+        if (orderRequest.items() == null || orderRequest.items().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("Items list must not be empty"));
+        }
+
         return webClient.get()
                 .uri(userServiceUrl + "/me")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + orderRequest.jwtToken())
                 .retrieve()
-                .onStatus(httpStatus -> httpStatus.isError(), clientResponse ->
-                        Mono.error(new IllegalStateException("Användaren är ogiltig eller kunde inte hittas. Ogiltig JWT-token.")))
+                .onStatus(HttpStatusCode::isError, resp -> resp.createException().flatMap(Mono::error))
                 .bodyToMono(UserResponse.class)
-                .flatMap(userResponse -> {
-                    UUID userId = userResponse.userId();
+                .flatMap(user -> {
+                    UUID userId = user.userId();
 
                     Order order = new Order();
                     order.setUserId(userId);
@@ -56,40 +59,41 @@ public class OrderService {
                     order.setStatus(OrderStatus.CREATED);
                     order.setTotalAmount(BigDecimal.ZERO);
 
-                    System.out.println("här");
                     return Flux.fromIterable(orderRequest.items())
-                            .flatMap(itemRequest ->
+                            .flatMap(itemReq ->
                                     webClient.post()
-                                            .uri(productServiceUrl + "/api/inventory/{productId}/purchase", itemRequest.productId())
-                                            .bodyValue(new AdjustStockRequest(itemRequest.quantity()))
+                                            .uri(productServiceUrl + "/api/inventory/{productId}/purchase", itemReq.productId())
+                                            .bodyValue(new AdjustStockRequest(itemReq.quantity()))
                                             .retrieve()
-                                            .onStatus(httpStatus -> httpStatus.isError(), clientResponse ->
-                                                    Mono.error(new IllegalStateException("Kunde inte reservera lager för produkt " + itemRequest.productId())))
+                                            .onStatus(HttpStatusCode::isError, resp -> resp.createException().flatMap(Mono::error))
                                             .bodyToMono(ProductResponse.class)
-                                            .map(productResponse -> {
-                                                System.out.println("här inne i map");
-                                                OrderItem orderItem = new OrderItem();
-                                                orderItem.setProductId(itemRequest.productId());
-                                                orderItem.setQuantity(itemRequest.quantity());
-                                                orderItem.setPriceAtPurchase(productResponse.price());
-                                                orderItem.setProductName(productResponse.name());
-                                                orderItem.setOrder(order);
-                                                return orderItem;
+                                            .map(prod -> {
+                                                OrderItem oi = new OrderItem();
+                                                oi.setProductId(itemReq.productId());
+                                                oi.setQuantity(itemReq.quantity());
+                                                oi.setPriceAtPurchase(prod.price());
+                                                oi.setProductName(prod.name());
+                                                oi.setOrder(order);
+                                                return oi;
                                             })
                             )
                             .collectList()
-                            .doOnNext(orderItems -> {
-                                order.setOrderItems(orderItems);
-                                BigDecimal totalAmount = orderItems.stream()
-                                        .map(item -> item.getPriceAtPurchase().multiply(new BigDecimal(item.getQuantity())))
+                            .doOnNext(items -> {
+                                order.setOrderItems(items);
+                                BigDecimal total = items.stream()
+                                        .map(i -> i.getPriceAtPurchase().multiply(BigDecimal.valueOf(i.getQuantity())))
                                         .reduce(BigDecimal.ZERO, BigDecimal::add);
-                                order.setTotalAmount(totalAmount);
+                                order.setTotalAmount(total);
                                 order.setStatus(OrderStatus.CONFIRMED);
                             })
+
                             .flatMap(items ->
                                     Mono.fromCallable(() -> orderRepository.save(order))
-                                            .subscribeOn(Schedulers.boundedElastic()))
+                                            .subscribeOn(Schedulers.boundedElastic())
+                            )
+
                             .onErrorResume(ex -> {
+                                log.warn("Order creation failed, marking as FAILED", ex);
                                 order.setStatus(OrderStatus.FAILED);
                                 return Mono.fromCallable(() -> orderRepository.save(order))
                                         .subscribeOn(Schedulers.boundedElastic())
