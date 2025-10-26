@@ -44,10 +44,9 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Switch to classic Spring MVC (servlet/Tomcat) instead of WebFlux -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
         <dependency>
@@ -59,7 +58,6 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <version>1.18.38</version>
-            <optional>true</optional>
         </dependency>
 
         <dependency>
@@ -75,14 +73,8 @@
 
         <dependency>
             <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
             <version>${springdoc.version}</version>
-        </dependency>
-
-        <!-- Actuator for health/info/metrics -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
 
@@ -104,19 +96,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- OpenPDF for PDF generation -->
-        <dependency>
-            <groupId>com.github.librepdf</groupId>
-            <artifactId>openpdf</artifactId>
-            <version>1.3.39</version>
-        </dependency>
-
-        <!-- Stripe Java SDK for payment intents -->
-        <dependency>
-            <groupId>com.stripe</groupId>
-            <artifactId>stripe-java</artifactId>
-            <version>24.10.0</version>
-        </dependency>
     </dependencies>
 
     <build>

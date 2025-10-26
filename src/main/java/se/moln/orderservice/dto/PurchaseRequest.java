@@ -7,8 +7,7 @@ import java.util.List;
 import java.util.UUID;
 
 public record PurchaseRequest(
-        @NotNull List<OrderItemRequest> items,
-        String paymentId  // Optional: link to existing payment
+        @NotNull List<OrderItemRequest> items
 ) {
     public record OrderItemRequest(
             @NotNull UUID productId,

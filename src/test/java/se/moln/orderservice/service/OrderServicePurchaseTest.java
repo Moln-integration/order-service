@@ -1,32 +1,6 @@
 package se.moln.orderservice.service;
 
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-@Disabled("Reaktivt WebFlux-test inaktiverat efter migrering till MVC + JPA. Byt till synkrona tester vid behov.")
-class OrderServicePurchaseTest {
-
-    @Test
-    void placeholder() {
-        assertTrue(true);
-    }
-}
-/*
-package se.moln.orderservice.service;
-
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-@Disabled("Reaktivt WebFlux-test inaktiverat efter migrering till MVC + JPA. Byt till synkrona tester vid behov.")
-    @Test
-    void placeholder() {
-        assertTrue(true);
-    }
-
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -253,4 +227,3 @@ class OrderServicePurchaseTest {
         // Refund was attempted (may not be counted due to override path short-circuit); primary guarantee is original error bubbles up.
     }
 }
-*/
